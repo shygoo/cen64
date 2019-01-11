@@ -203,8 +203,9 @@ static inline void rsp_wb_stage(struct rsp *rsp) {
 
   rsp->regs[dfwb_latch->result.dest] = dfwb_latch->result.result;
 
+  /*
   // catch write to audio's dinp or gfx's dlcount
-  if(dfwb_latch->result.dest == 28) 
+  if(dfwb_latch->result.dest == 27) 
   {
     uint32_t *imem32 = (uint32_t*) &rsp->mem[0x1000];
     uint32_t imem_word = imem32[0];
@@ -215,9 +216,14 @@ static inline void rsp_wb_stage(struct rsp *rsp) {
       uint32_t cmd0 = rsp->regs[25];
       uint32_t cmd1 = rsp->regs[24];
     
+      if(cmd_addr > 0x00400000)
+      {
+        printf("[gfx] ow i am dead\n");
+      }
+
       printf("[gfx] %08X: %08X %08X\n", cmd_addr, cmd0, cmd1);
     }
-    else if(imem_word == 0x34210001) // assume audio
+    else if(imem_word == 0x09000419) // assume audio
     {
       uint32_t cmd_addr = rsp->regs[28];
       uint32_t cmd0 = rsp->regs[26];
@@ -229,7 +235,7 @@ static inline void rsp_wb_stage(struct rsp *rsp) {
     {
       printf("what is %08X?\n", imem_word);
     }
-  }
+  }*/
 }
 
 // Advances the processor pipeline by one clock.

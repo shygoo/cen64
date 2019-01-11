@@ -15,12 +15,108 @@
 #include "rsp/cpu.h"
 #include "rsp/interface.h"
 
+#define F3D_YIELD_SIZE       0x900
+#define F3D_SETUP_TMP_OFFSET 0x8E0
+
+#define F3DEX_YIELD_SIZE       0xD00
+#define F3DEX_YIELD_SIZE_OUT   0xC00 // rsp to rdram transfer is smaller for some reason
+#define F3DEX_SETUP_TMP_OFFSET 0xBE0
+
+void hook_rsp_dma_read(struct rsp *rsp);
+void hook_rsp_dma_write(struct rsp *rsp);
+void dbg_rsp_log_yield(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr, uint32_t length);
+void dbg_rsp_log_recovery(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr, uint32_t length);
+
+// dram to rsp
+void hook_rsp_dma_read(struct rsp *rsp)
+{
+  uint32_t rsp_addr = rsp->regs[RSP_CP0_REGISTER_DMA_CACHE] & 0x1FFC;
+  uint32_t dram_addr = rsp->regs[RSP_CP0_REGISTER_DMA_DRAM] & 0x7FFFFC;
+  uint32_t length = (rsp->regs[RSP_CP0_REGISTER_DMA_READ_LENGTH] & 0xFFF) + 1;
+
+  if(rsp_addr == 0)
+  {
+    dbg_rsp_log_recovery(rsp, rsp_addr, dram_addr, length);
+  }
+}
+
+// rsp to dram
+void hook_rsp_dma_write(struct rsp *rsp)
+{
+  uint32_t length = (rsp->regs[RSP_CP0_REGISTER_DMA_WRITE_LENGTH] & 0xFFF) + 1;
+  uint32_t rsp_addr = rsp->regs[RSP_CP0_REGISTER_DMA_CACHE] & 0x1FFC;
+  uint32_t dram_addr = rsp->regs[RSP_CP0_REGISTER_DMA_DRAM] & 0x7FFFFC;
+
+  if(rsp_addr == 0)
+  {
+    dbg_rsp_log_yield(rsp, rsp_addr, dram_addr, length);
+  }
+}
+
+void dbg_rsp_log_yield(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr, uint32_t length)
+{
+  uint32_t setup_tmp_offset;
+  
+  switch(length)
+  {
+  case F3D_YIELD_SIZE:
+    setup_tmp_offset = F3D_SETUP_TMP_OFFSET;
+    break;
+  case F3DEX_YIELD_SIZE_OUT:
+    setup_tmp_offset = F3DEX_SETUP_TMP_OFFSET;
+    break;
+   default: return;
+  }
+
+  printf("yield   rsp %08X -> dram %08X (%04X bytes)\n", rsp_addr, dram_addr, length);
+
+  uint32_t dlcount, dinp, inp, outp;
+  uint32_t *setup_tmp = (uint32_t *) &rsp->mem[setup_tmp_offset];
+
+  dlcount = byteswap_32(setup_tmp[1]);
+  dinp = byteswap_32(setup_tmp[2]);
+  inp = byteswap_32(setup_tmp[3]);
+  outp = byteswap_32(setup_tmp[4]);
+
+  printf("  setup: dlcount %08X, dinp %08X, inp %08X, outp %08X\n", dlcount, dinp, inp, outp);
+}
+
+void dbg_rsp_log_recovery(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr, uint32_t length)
+{
+  uint32_t setup_tmp_offset;
+  
+  switch(length)
+  {
+  case F3D_YIELD_SIZE:
+    setup_tmp_offset = F3D_SETUP_TMP_OFFSET;
+    break;
+  case F3DEX_YIELD_SIZE:
+    setup_tmp_offset = F3DEX_SETUP_TMP_OFFSET;
+    break;
+  default: return;
+  }
+  
+  uint32_t dlcount, dinp, inp, outp;
+  uint32_t dram_rsp_setup_addr = dram_addr + setup_tmp_offset;
+  
+  printf("restore rsp %08X <- dram %08X (%04X bytes)\n", rsp_addr, dram_addr, length);
+  
+  bus_read_word(rsp->bus, dram_rsp_setup_addr+0x04, &dlcount);
+  bus_read_word(rsp->bus, dram_rsp_setup_addr+0x08, &dinp);
+  bus_read_word(rsp->bus, dram_rsp_setup_addr+0x0C, &inp);
+  bus_read_word(rsp->bus, dram_rsp_setup_addr+0x10, &outp);
+  
+  printf("  dlcount %08X, dinp %08X, inp %08X, outp %08X\n\n", dlcount, dinp, inp, outp);
+}
+
 // DMA into the RSP's memory space.
 void rsp_dma_read(struct rsp *rsp) {
   uint32_t length = (rsp->regs[RSP_CP0_REGISTER_DMA_READ_LENGTH] & 0xFFF) + 1;
   uint32_t skip = rsp->regs[RSP_CP0_REGISTER_DMA_READ_LENGTH] >> 20 & 0xFFF;
   unsigned count = rsp->regs[RSP_CP0_REGISTER_DMA_READ_LENGTH] >> 12 & 0xFF;
   unsigned j, i = 0;
+
+  hook_rsp_dma_read(rsp);
 
   // Force alignment.
   length = (length + 0x7) & ~0x7;
@@ -66,6 +162,8 @@ void rsp_dma_write(struct rsp *rsp) {
   uint32_t skip = rsp->regs[RSP_CP0_REGISTER_DMA_WRITE_LENGTH] >> 20 & 0xFFF;
   unsigned count = rsp->regs[RSP_CP0_REGISTER_DMA_WRITE_LENGTH] >> 12 & 0xFF;
   unsigned j, i = 0;
+
+  hook_rsp_dma_write(rsp);
 
   // Force alignment.
   length = (length + 0x7) & ~0x7;
