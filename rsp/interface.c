@@ -18,14 +18,16 @@
 #define F3D_YIELD_SIZE       0x900
 #define F3D_SETUP_TMP_OFFSET 0x8E0
 
-#define F3DEX_YIELD_SIZE       0xD00
-#define F3DEX_YIELD_SIZE_OUT   0xC00 // rsp to rdram transfer is smaller for some reason
+#define F3DEX_YIELD_SIZE       0xC00 // 0xC00 gex64, 0xD00 mk64
+#define F3DEX_YIELD_SIZE_OUT   0xC00 // rsp to rdram transfer is smaller on mk64 for some reason
 #define F3DEX_SETUP_TMP_OFFSET 0xBE0
 
 void hook_rsp_dma_read(struct rsp *rsp);
 void hook_rsp_dma_write(struct rsp *rsp);
 void dbg_rsp_log_yield(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr, uint32_t length);
 void dbg_rsp_log_recovery(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr, uint32_t length);
+
+uint32_t gLastTaskType = 0;
 
 // dram to rsp
 void hook_rsp_dma_read(struct rsp *rsp)
@@ -37,6 +39,16 @@ void hook_rsp_dma_read(struct rsp *rsp)
   if(rsp_addr == 0)
   {
     dbg_rsp_log_recovery(rsp, rsp_addr, dram_addr, length);
+  }
+
+  if(rsp_addr == 0xFC0)
+  {
+    bus_read_word(rsp->bus, dram_addr, &gLastTaskType);
+    switch(gLastTaskType)
+    {
+    case 1: printf("rsp received gfx task ----------------\n"); break;
+    case 2: printf("rsp received audio task --------------\n"); break;
+    }
   }
 }
 
@@ -62,10 +74,12 @@ void dbg_rsp_log_yield(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr, u
   case F3D_YIELD_SIZE:
     setup_tmp_offset = F3D_SETUP_TMP_OFFSET;
     break;
-  case F3DEX_YIELD_SIZE_OUT:
+  case F3DEX_YIELD_SIZE:
     setup_tmp_offset = F3DEX_SETUP_TMP_OFFSET;
     break;
-   default: return;
+   default:
+    //printf("%08X\n", length);
+    return;
   }
 
   printf("yield   rsp %08X -> dram %08X (%04X bytes)\n", rsp_addr, dram_addr, length);
@@ -93,7 +107,9 @@ void dbg_rsp_log_recovery(struct rsp *rsp, uint32_t rsp_addr, uint32_t dram_addr
   case F3DEX_YIELD_SIZE:
     setup_tmp_offset = F3DEX_SETUP_TMP_OFFSET;
     break;
-  default: return;
+  default:
+    //printf("%08X\n", length);
+    return;
   }
   
   uint32_t dlcount, dinp, inp, outp;
